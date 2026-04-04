@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: youtube-notes-generator
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: MODEL
+        value: meta-llama/llama-3-8b-instruct:free
