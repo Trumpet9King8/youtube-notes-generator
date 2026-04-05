@@ -2,49 +2,38 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>YouTube Notes Generator</title>
-  <style>
-    body { font-family: system-ui; background: #0f172a; color: #e2e8f0; padding: 2rem; }
-    .container { max-width: 800px; margin: 0 auto; background: #1e293b; padding: 2rem; border-radius: 1rem; }
-    input, button { width: 100%; padding: 0.75rem; margin: 0.5rem 0; border-radius: 0.5rem; border: none; }
-    input { background: #0f172a; color: white; border: 1px solid #334155; }
-    button { background: #3b82f6; color: white; cursor: pointer; font-weight: bold; }
-    .hidden { display: none; }
-    #result { background: #0f172a; padding: 1rem; border-radius: 0.5rem; margin-top: 1rem; white-space: pre-wrap; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Benign Liberty – YouTube Notes Generator</title>
+  <link rel="stylesheet" href="style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;600;700&family=Playfair+Display:ital@0;1&display=swap" rel="stylesheet">
 </head>
 <body>
-<div class="container">
-  <h1>🎬 YouTube → Lecture Notes</h1>
-  <input type="text" id="url" placeholder="https://www.youtube.com/watch?v=..." />
-  <button id="generate">Generate Notes</button>
-  <div id="loading" class="hidden">⏳ Processing... (30-60 seconds)</div>
-  <div id="result"></div>
-</div>
-<script>
-  document.getElementById('generate').onclick = async () => {
-    const url = document.getElementById('url').value;
-    if (!url) return alert('Enter a YouTube URL');
-    const loading = document.getElementById('loading');
-    const resultDiv = document.getElementById('result');
-    loading.classList.remove('hidden');
-    resultDiv.innerHTML = '';
-    try {
-      const res = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      resultDiv.innerHTML = `<strong>✅ Notes for ${data.videoId}</strong><br><br>${data.notes.replace(/\n/g, '<br>')}`;
-    } catch (err) {
-      resultDiv.innerHTML = `<span style="color:#f87171;">❌ ${err.message}</span>`;
-    } finally {
-      loading.classList.add('hidden');
-    }
-  };
-</script>
+  <div class="container">
+    <header>
+      <h1>🎬 Benign Liberty <span class="light">| YouTube → Notes</span></h1>
+      <p class="tagline">Turn any lecture or tutorial into structured notes – instantly.</p>
+    </header>
+
+    <main>
+      <div class="input-group">
+        <input type="text" id="urlInput" placeholder="Paste YouTube URL here (e.g., https://www.youtube.com/watch?v=...)" />
+        <button id="generateBtn">Generate Notes</button>
+      </div>
+
+      <div id="loading" class="hidden">
+        <div class="spinner"></div>
+        <p>Fetching transcript and generating notes... (30-60 seconds)</p>
+      </div>
+
+      <div id="result" class="result-card"></div>
+    </main>
+
+    <footer>
+      <p>Powered by OpenRouter (free Llama 3) • No API key required from you</p>
+      <p class="small">Benign Liberty – quiet electric confidence</p>
+    </footer>
+  </div>
+
+  <script src="script.js"></script>
 </body>
 </html>

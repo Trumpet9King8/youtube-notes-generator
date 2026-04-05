@@ -1,15 +1,15 @@
 import 'dotenv/config';
-import { fetchTranscript, YoutubeTranscript } from 'youtube-transcript/dist/youtube-transcript.esm.js';
-import axios from 'axios';
-import { promises as fs } from 'fs';
-import readline from 'readline';
+import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import NodeCache from 'node-cache';
 
-// OpenRouter configuration
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = 'minimax/minimax-m2.5';
-// free model
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const app = express();
+const PORT = process.env.PORT || 3000;
+const cache = new NodeCache({ stdTTL: 86400 });
 
+// Helper: extract video ID
 function extractVideoId(url) {
   const patterns = [
     /(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})(?:[&?]|$)/,
@@ -20,21 +20,60 @@ function extractVideoId(url) {
     const match = url.match(pattern);
     if (match) return match[1];
   }
-  throw new Error('Could not extract video ID from URL');
+  throw new Error('Could not extract video ID');
 }
 
-async function getTranscript(videoId) {
+// Dynamic import for youtube-transcript (more robust)
+let fetchTranscript;
+try {
+  const module = await import('youtube-transcript/dist/youtube-transcript.esm.js');
+  fetchTranscript = module.fetchTranscript;
+  console.log('✅ youtube-transcript loaded successfully');
+} catch (err) {
+  console.error('❌ Failed to load youtube-transcript:', err.message);
+  // Fallback: try default import
+  const fallback = await import('youtube-transcript');
+  fetchTranscript = fallback.fetchTranscript || fallback.YoutubeTranscript?.fetchTranscript;
+}
+
+if (!fetchTranscript) {
+  console.error('❌ Could not find fetchTranscript. Exiting.');
+  process.exit(1);
+}
+
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// API endpoint
+app.post('/api/generate', async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'URL required' });
+
+  let videoId;
   try {
-    const transcriptItems = await fetchTranscript(videoId);
-    const fullText = transcriptItems.map(item => item.text).join(' ');
-    return fullText;
-  } catch (error) {
-    console.error('Error fetching transcript:', error.message);
-    return null;
+    videoId = extractVideoId(url);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
   }
-}
 
-async function generateNotes(transcript) {
+  // Check cache
+  let transcript = cache.get(videoId);
+  if (!transcript) {
+    try {
+      const items = await fetchTranscript(videoId);
+      transcript = items.map(item => item.text).join(' ');
+      cache.set(videoId, transcript);
+    } catch (err) {
+      return res.status(404).json({ error: 'No transcript found. Video must have captions.' });
+    }
+  }
+
+  // Generate notes via OpenRouter
+  const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+  if (!OPENROUTER_API_KEY) {
+    return res.status(500).json({ error: 'Server missing OpenRouter API key' });
+  }
+
   const systemPrompt = `You are an expert educator. Convert the transcript into structured notes with:
 
 # Lecture Notes
@@ -53,77 +92,39 @@ Use clear, simple language. No extra commentary.`;
 
   const userPrompt = `Transcript:\n${transcript.substring(0, 8000)}`;
 
-  const payload = {
-    model: MODEL,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt }
-    ],
-    temperature: 0.2,
-    max_tokens: 1500
-  };
-
-  const headers = {
-    Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-    'Content-Type': 'application/json'
-  };
-
   try {
-    const response = await axios.post(OPENROUTER_URL, payload, { headers });
-    const data = response.data;
-    if (data.choices && data.choices[0] && data.choices[0].message) {
-      return data.choices[0].message.content;
-    }
-    console.error('Unexpected API response:', JSON.stringify(data, null, 2));
-    return null;
-  } catch (error) {
-    console.error('OpenRouter API error:', error.response?.data || error.message);
-    return null;
+    const axios = (await import('axios')).default;
+    const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
+      model: process.env.MODEL || 'meta-llama/llama-3-8b-instruct:free',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.2,
+      max_tokens: 1500
+    }, {
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 60000
+    });
+    const notes = response.data.choices[0].message.content;
+    res.json({ success: true, notes, videoId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'AI generation failed: ' + (err.response?.data?.error?.message || err.message) });
   }
-}
+});
 
-async function saveNotes(notes, videoId) {
-  const filename = `notes_${videoId}.md`;
-  await fs.writeFile(filename, notes, 'utf-8');
-  console.log(`Notes saved to ${filename}`);
-  return filename;
-}
+// Health check
+app.get('/health', (req, res) => res.send('OK'));
 
-async function main() {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
+// Serve frontend
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
-  rl.question('Enter YouTube URL: ', async (url) => {
-    rl.close();
-    if (!url) return console.log('No URL.');
-
-    let videoId;
-    try {
-      videoId = extractVideoId(url);
-      console.log(`Video ID: ${videoId}`);
-    } catch (err) {
-      return console.error(err.message);
-    }
-
-    console.log('Fetching transcript...');
-    const transcript = await getTranscript(videoId);
-    if (!transcript) {
-      console.log('No captions found. Make sure the video has English captions.');
-      return;
-    }
-
-    console.log(`Transcript length: ${transcript.length} chars`);
-    console.log(`Generating notes using ${MODEL} (free)...`);
-    const notes = await generateNotes(transcript);
-    if (notes) {
-      await saveNotes(notes, videoId);
-      console.log('\n--- Notes Preview ---\n', notes.substring(0, 800));
-    } else {
-      console.log('Generation failed.');
-    }
-  });
-}
-
-main().catch(console.error);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Server running on port ${PORT}`);
+});
